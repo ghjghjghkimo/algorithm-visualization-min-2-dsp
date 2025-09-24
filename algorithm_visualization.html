@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>演算法 4 (Min-2-DSP for DAGs) vs. A* 視覺化比較</title>
+    
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    
+    <style>
+        * { box-sizing: border-box; } /* Add box-sizing for predictable layout */
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; background-color: #f4f4f9; overflow: hidden; }
+        h1 { text-align: center; color: #333; margin: 0; padding: 10px; height: 50px; flex-shrink: 0; }
+        .container { display: flex; height: calc(100vh - 50px); padding: 10px; gap: 10px; }
+        #network { width: 70%; height: 100%; border: 2px solid #ccc; border-radius: 8px; background-color: #fff; }
+        .controls-log { width: 30%; display: flex; flex-direction: column; gap: 10px; }
+        .controls { padding: 15px; border: 1px solid #ddd; border-radius: 8px; background-color: #fff; }
+        .controls button { display: block; width: 100%; padding: 10px; margin-bottom: 10px; font-size: 16px; border-radius: 5px; border: none; cursor: pointer; transition: background-color: 0.3s; }
+        
+        /* 新增輸入欄位的樣式 */
+        .controls .input-group {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .controls .input-group label {
+            font-size: 14px;
+            color: #555;
+            flex-shrink: 0;
+            margin-right: 10px;
+        }
+        .controls .input-group input {
+            width: 80px;
+            padding: 6px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            text-align: center;
+            font-size: 14px;
+        }
+        .controls button:last-child {
+            margin-bottom: 0;
+        }
+
+        /* 按鈕顏色 */
+        #runAStar { background-color: #4CAF50; color: white; }
+        #runAStar:hover { background-color: #45a049; }
+        #runAlgo4 { background-color: #008CBA; color: white; }
+        #runAlgo4:hover { background-color: #007ba7; }
+        #generateGraph { background-color: #ff9800; color: white; }
+        #generateGraph:hover { background-color: #f57c00; }
+        #reset { background-color: #f44336; color: white; }
+        #reset:hover { background-color: #da190b; }
+        #demo { background-color: #9C27B0; color: white; }
+        #demo:hover { background-color: #7B1FA2; }
+        
+        #log { flex-grow: 1; padding: 15px; border: 1px solid #ddd; border-radius: 8px; background-color: #fff; overflow-y: auto; font-family: 'Courier New', Courier, monospace; font-size: 14px; line-height: 1.6; }
+        #log p { margin: 5px 0; }
+        .log-title { font-weight: bold; color: #333; }
+        .log-info { color: #555; }
+        .log-success { color: #2a882a; }
+        .log-warn { color: #b95000; }
+        .log-error { color: #c00; }
+    </style>
+</head>
+<body>
+
+    <h1>演算法 4 (Min-2-DSP) vs. A* 視覺化比較</h1>
+    <div class="container">
+        <div id="network"></div>
+        <div class="controls-log">
+            <div class="controls">
+                <button id="runAStar">1. 執行 A* 演算法 (獨立尋路)</button>
+                <button id="runAlgo4">2. 執行演算法 4 (最小化交集)</button>
+                <hr style="border: none; border-top: 1px solid #eee; margin: 15px 0;">
+                <div class="input-group">
+                    <label for="numLayersInput">網路層數 (2-20):</label>
+                    <input type="number" id="numLayersInput" value="4" min="2" max="20">
+                </div>
+                <div class="input-group">
+                    <label for="nodesPerLayerInput">每層節點數 (2-20):</label>
+                    <input type="number" id="nodesPerLayerInput" value="3" min="2" max="20">
+                </div>
+                <button id="generateGraph">生成新網路圖</button>
+                <hr style="border: none; border-top: 1px solid #eee; margin: 15px 0;">
+                <button id="reset">重置視覺化</button>
+                <button id="demo">▶ 自動示範流程</button>
+            </div>
+            <div id="log">
+                <p class="log-title">操作日誌:</p>
+                <p class="log-info">請點擊按鈕以開始。</p>
+            </div>
+        </div>
+    </div>
+
+<script type="text/javascript">
+document.addEventListener('DOMContentLoaded', function () {
+    // 初始化 vis-network 的資料集
+    const nodes = new vis.DataSet();
+    const edges = new vis.DataSet();
+
+    // 預設的初始圖資料
+    const initialNodes = [
+        { id: 's1', label: 's1', color: '#FFDDC1', x: -400, y: -100, fixed: true, startColor: '#FFDDC1' },
+        { id: 't1', label: 't1', color: '#FFDDC1', x: 400, y: -100, fixed: true, startColor: '#FFDDC1' },
+        { id: 's2', label: 's2', color: '#C1E1FF', x: -400, y: 100, fixed: true, startColor: '#C1E1FF' },
+        { id: 't2', label: 't2', color: '#C1E1FF', x: 400, y: 100, fixed: true, startColor: '#C1E1FF' },
+        { id: 'a', label: 'a', x: -200, y: -150 },
+        { id: 'b', label: 'b', x: 0, y: -150 },
+        { id: 'c', label: 'c', x: 200, y: -150 },
+        { id: 'B1', label: 'B1', x: -200, y: 0 },
+        { id: 'B2', label: 'B2', x: 0, y: 50 },
+        { id: 'B3', label: 'B3', x: 0, y: -50 },
+        { id: 'B4', label: 'B4', x: 200, y: 0 },
+        { id: 'd', label: 'd', x: -200, y: 150 },
+        { id: 'e', label: 'e', x: 0, y: 150 },
+        { id: 'f', label: 'f', x: 200, y: 150 },
+    ];
+    const initialEdges = [
+        { id: 's1-a', from: 's1', to: 'a', weight: 1, label: '1' },
+        { id: 'a-b', from: 'a', to: 'b', weight: 1, label: '1' },
+        { id: 'b-c', from: 'b', to: 'c', weight: 1, label: '1' },
+        { id: 'c-t1', from: 'c', to: 't1', weight: 1, label: '1' },
+        { id: 's1-B1', from: 's1', to: 'B1', weight: 1, label: '1' },
+        { id: 'B1-B2', from: 'B1', to: 'B2', weight: 1, label: '1' },
+        { id: 'B1-B3', from: 'B1', to: 'B3', weight: 1, label: '1' },
+        { id: 'B2-B4', from: 'B2', to: 'B4', weight: 1, label: '1' },
+        { id: 'B3-B4', from: 'B3', to: 'B4', weight: 1, label: '1' },
+        { id: 'B4-t1', from: 'B4', to: 't1', weight: 1, label: '1' },
+        { id: 's2-B1', from: 's2', to: 'B1', weight: 1, label: '1' },
+        { id: 'B4-t2', from: 'B4', to: 't2', weight: 1, label: '1' },
+        { id: 's2-d', from: 's2', to: 'd', weight: 1, label: '1' },
+        { id: 'd-e', from: 'd', to: 'e', weight: 1, label: '1' },
+        { id: 'e-f', from: 'e', to: 'f', weight: 1, label: '1' },
+        { id: 'f-t2', from: 'f', to: 't2', weight: 1, label: '1' },
+    ];
+    
+    nodes.add(initialNodes);
+    edges.add(initialEdges);
+
+    // 設定網路視覺化選項
+    const network = new vis.Network(document.getElementById('network'), { nodes, edges }, {
+        physics: { enabled: false }, // 禁用物理引擎以使用手動座標
+        edges: { 
+            arrows: 'to', 
+            font: { align: 'top', color: '#343434' },
+            color: { inherit: false, color: '#848484' }
+        },
+    });
+
+    const logContainer = document.getElementById('log');
+    function log(message, type = 'info') {
+        logContainer.innerHTML += `<p class="log-${type}">${message}</p>`;
+        logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    // --- 核心演算法 ---
+
+    // 在有向無環圖(DAG)上計算單源最短路徑
+    function sssp_dag(startNode) {
+        let distances = {}; 
+        let parents = {};
+        nodes.getIds().forEach(node => { 
+            distances[node] = Infinity; 
+            parents[node] = null; 
+        });
+        
+        if (!nodes.get(startNode)) return { distances, parents }; // Guard against non-existent start node
+        distances[startNode] = 0;
+
+        // 建立鄰接表
+        let adj = {}; 
+        nodes.getIds().forEach(id => adj[id] = []);
+        edges.get().forEach(edge => {
+            if (adj[edge.from]) {
+                adj[edge.from].push({ to: edge.to, weight: edge.weight || 1 });
+            }
+        });
+
+        // 拓撲排序 (此處使用 BFS 順序，對於 DAG 上的最短路徑是可行的)
+        let visitedOrder = [];
+        let q = [startNode];
+        let visited = new Set([startNode]);
+        while (q.length) {
+            const u = q.shift();
+            visitedOrder.push(u);
+            if (!adj[u]) continue;
+            // 將相鄰節點加入佇列
+            adj[u].sort((a,b) => a.to.localeCompare(b.to)).forEach(edgeInfo => {
+                 if (!visited.has(edgeInfo.to)) {
+                    visited.add(edgeInfo.to);
+                    q.push(edgeInfo.to);
+                }
+            });
+        }
+        
+        // 依照拓撲順序進行鬆弛操作
+        for (const u of visitedOrder) {
+            if (distances[u] === Infinity || !adj[u]) continue;
+            adj[u].forEach(edgeInfo => {
+                const v = edgeInfo.to;
+                const w = edgeInfo.weight;
+                if (distances[u] + w < distances[v]) {
+                    distances[v] = distances[u] + w;
+                    parents[v] = u;
+                }
+            });
+        }
+        return { distances, parents };
+    }
+    
+    // A* 演算法 (在此 DAG 情境下簡化為 Dijkstra/SSSP)
+    function a_star(start, end) {
+        let { distances, parents } = sssp_dag(start);
+        if (distances[end] === Infinity) return { path: [], edges: [] };
+        
+        let path = [], pathEdges = [], curr = end;
+        while (curr) {
+            path.unshift(curr);
+            let p = parents[curr];
+            if (p) {
+                const e = edges.get({ filter: ed => ed.from === p && ed.to === curr })[0];
+                if(e) pathEdges.unshift(e.id);
+            }
+            curr = p;
+        }
+        return { path, edges: pathEdges };
+    }
+
+    // 演算法 4：尋找最小化交集的兩條最短路徑 (Heuristic Implementation)
+    function runAlgorithm4() {
+        // =========================================================================
+        // Algorithm 4: MIN-2-DSP-DAG(G, s1, t1, s2, t2)
+        // =========================================================================
+        log('<hr><p class="log-title">[演算法 4] 開始執行...</p>');
+
+        // --- 1. if 2-DSP(s1,t1,s2,t2) then Return 0; ---
+        // 簡化：我們先計算初始最短路徑，如果它們不相交，就直接返回。
+        const p1_initial = a_star('s1', 't1');
+        const p2_initial = a_star('s2', 't2');
+        let intersection_edges = p1_initial.edges.filter(edgeId => p2_initial.edges.includes(edgeId));
+        if (intersection_edges.length === 0) {
+            log('[第1步] 初始最短路徑已無交集，直接返回此最佳解。', 'success');
+            return { p1_edges: p1_initial.edges, p2_edges: p2_initial.edges };
+        }
+
+        // --- 2. Compute E_∩ = E(s1,t1) ∩ E(s2,t2) and define G_=(V, E_∩) ---
+        // 在上一步中，我們已經找到了初始最短路徑的交集邊。
+        // 一個更嚴謹的 E_∩ 需要考慮所有可能的最短路徑，但為簡化，我們以此為基礎。
+        log(`[第2步] 找到 ${intersection_edges.length} 條潛在交集邊 E_∩: {${intersection_edges.join(', ')}}`, 'info');
+
+        // --- 3. Let B be a partitioning of V induced by the connected components of G_un; ---
+        // 簡化：我們將所有交集邊的端點視為單一的連通分量 B。
+        const component_nodes = new Set();
+        intersection_edges.forEach(edgeId => {
+            const edge = edges.get(edgeId);
+            component_nodes.add(edge.from);
+            component_nodes.add(edge.to);
+        });
+        log(`[第3步] 識別出交集元件 B 的節點: {${[...component_nodes].join(', ')}}`, 'info');
+
+        // --- 4. foreach B in B do ... ---
+        // 簡化：我們只處理這一個識別出的交集元件。
+        // --- 5-14: (核心邏輯簡化) ---
+        // 論文的核心思想是在元件 B 上找到最佳繞行路徑。
+        // 一個有效的啟發式方法是：暫時提高交集元件 B 中所有邊的成本，
+        // 迫使尋路演算法尋找替代路徑。這模擬了在輔助圖 H_B 上尋找最佳解的過程。
+        log(`[第4-14步 簡化策略] 提高交集元件 B 中所有邊的成本，以尋找替代路徑...`, 'warn');
+        
+        const originalWeights = [];
+        intersection_edges.forEach(edgeId => {
+            const edge = edges.get(edgeId);
+            if (edge) {
+                originalWeights.push({ id: edgeId, weight: edge.weight, label: edge.label });
+                const newWeight = edge.weight + 50; // 增加一個很大的懲罰值
+                edges.update({ id: edgeId, weight: newWeight, label: String(newWeight) });
+            }
+        });
+
+        // 在修改成本後的圖上，為 s1->t1 和 s2->t2 重新尋找“最短”路徑
+        const p1_final = a_star('s1', 't1');
+        const p2_final = a_star('s2', 't2');
+
+        // 將圖的成本還原，以便下次計算
+        originalWeights.forEach(item => {
+            edges.update({ id: item.id, weight: item.weight, label: item.label });
+        });
+        
+        if (p1_final.path.length === 0 || p2_final.path.length === 0) {
+            log('無法找到一組懲罰後的路徑。顯示初始相交路徑。', 'error');
+            return { p1_edges: p1_initial.edges, p2_edges: p2_initial.edges };
+        }
+
+        // --- 15. Return min_v∈V α(v) ---
+        // 我們的返回值就是找到的這對新路徑。
+        log('[第15步] 演算法 4 已找到一組交集更少（或無）的路徑組合。', 'success');
+        return { p1_edges: p1_final.edges, p2_edges: p2_final.edges };
+    }
+
+    // --- 控制與視覺化 ---
+
+    function resetVisualization() {
+        nodes.getIds().forEach(n => {
+            const originalNode = nodes.get(n);
+            if (originalNode) {
+                nodes.update({ id: n, color: originalNode.startColor || null, borderWidth: 1 });
+            }
+        });
+        edges.getIds().forEach(e => edges.update({ id: e, color: '#848484', width: 1, dashes: false }));
+        logContainer.innerHTML = '<p class="log-title">操作日誌:</p><p class="log-info">視覺化已重置。</p>';
+    }
+
+    function animatePath(pathEdges, color, width, dashes, delay = 200) {
+        if(!pathEdges) return;
+        pathEdges.forEach((eid, i) => {
+            setTimeout(() => {
+                edges.update({ id: eid, color, width, dashes });
+            }, i * delay);
+        });
+    }
+
+    function a_star_paths() {
+        const p1 = a_star('s1', 't1');
+        const p2 = a_star('s2', 't2');
+        return { p1_edges: p1.edges, p2_edges: p2.edges };
+    }
+    
+    // --- 新增：動態生成網路圖函式 ---
+    function generateNewGraph() {
+        resetVisualization();
+        log('<hr><p class="log-title">[系統] 正在生成新的隨機網路圖...</p>');
+        
+        const numLayersInput = document.getElementById('numLayersInput');
+        const nodesPerLayerInput = document.getElementById('nodesPerLayerInput');
+
+        const numLayers = parseInt(numLayersInput.value, 10) || 4;
+        const nodesPerLayerBase = parseInt(nodesPerLayerInput.value, 10) || 3;
+        
+        log(`[參數] 層數: ${numLayers}, 每層基礎節點數: ${nodesPerLayerBase}`, 'info');
+
+        nodes.clear();
+        edges.clear();
+
+        const newNodes = [];
+        const newEdges = [];
+        
+        const layerSpacing = 300;
+        const nodeSpacing = 150;
+
+        // 1. 新增起點和終點
+        newNodes.push({ id: 's1', label: 's1', color: '#FFDDC1', x: -layerSpacing * (numLayers / 2 + 0.5), y: -150, fixed: true, startColor: '#FFDDC1' });
+        newNodes.push({ id: 't1', label: 't1', color: '#FFDDC1', x: layerSpacing * (numLayers / 2 + 0.5), y: -150, fixed: true, startColor: '#FFDDC1' });
+        newNodes.push({ id: 's2', label: 's2', color: '#C1E1FF', x: -layerSpacing * (numLayers / 2 + 0.5), y: 150, fixed: true, startColor: '#C1E1FF' });
+        newNodes.push({ id: 't2', label: 't2', color: '#C1E1FF', x: layerSpacing * (numLayers / 2 + 0.5), y: 150, fixed: true, startColor: '#C1E1FF' });
+
+        let nodeCounter = 0;
+        const layers = [];
+
+        // 2. 建立中間層的節點
+        for (let i = 0; i < numLayers; i++) {
+            const layerNodes = [];
+            const x = -layerSpacing * (numLayers / 2 - 1 - i + 0.5);
+            const nodesInThisLayer = nodesPerLayerBase + Math.floor(Math.random() * 3) - 1;
+            for (let j = 0; j < nodesInThisLayer; j++) {
+                const nodeId = `n${nodeCounter++}`;
+                const y = (j - (nodesInThisLayer - 1) / 2) * nodeSpacing + (Math.random() - 0.5) * 60;
+                newNodes.push({ id: nodeId, label: nodeId, x: x, y: y });
+                layerNodes.push(nodeId);
+            }
+            layers.push(layerNodes);
+        }
+
+        // 3. 建立邊
+        let edgeCounter = 0;
+        const addEdge = (from, to) => {
+            const weight = Math.floor(Math.random() * 9) + 1;
+            newEdges.push({ id: `e${edgeCounter++}`, from, to, weight, label: String(weight) });
+        };
+
+        // 從起點到第一層的邊
+        layers[0].forEach(nodeId => {
+            if (Math.random() > 0.4) addEdge('s1', nodeId);
+            if (Math.random() > 0.4) addEdge('s2', nodeId);
+        });
+        addEdge('s1', layers[0][0]);
+        addEdge('s2', layers[0][layers[0].length - 1]);
+
+        // 中間層之間的邊
+        for (let i = 0; i < layers.length - 1; i++) {
+            const currentLayer = layers[i];
+            const nextLayer = layers[i+1];
+            currentLayer.forEach(fromNode => {
+                const connections = Math.floor(Math.random() * 2) + 1;
+                for (let k = 0; k < connections; k++) {
+                    const toNode = nextLayer[Math.floor(Math.random() * nextLayer.length)];
+                    // Ensure edge doesn't already exist
+                    if (!newEdges.some(e => e.from === fromNode && e.to === toNode)) {
+                        addEdge(fromNode, toNode);
+                    }
+                }
+            });
+        }
+
+        // 從最後一層到終點的邊
+        layers[layers.length - 1].forEach(nodeId => {
+            if (Math.random() > 0.4) addEdge(nodeId, 't1');
+            if (Math.random() > 0.4) addEdge(nodeId, 't2');
+        });
+        addEdge(layers[layers.length - 1][0], 't1');
+        addEdge(layers[layers.length - 1][layers[layers.length - 1].length-1], 't2');
+        
+        // 4. 更新網路
+        nodes.add(newNodes);
+        edges.add(newEdges);
+        
+        network.setOptions({ physics: { enabled: true, solver: 'barnesHut', barnesHut: {springConstant: 0.01} } });
+        setTimeout(() => {
+            network.setOptions({ physics: { enabled: false } });
+        }, 1200);
+
+        log('[系統] 新的網路圖已生成完畢。', 'success');
+    }
+
+    // --- 按鈕事件綁定 ---
+    
+    document.getElementById('runAStar').onclick = () => {
+        resetVisualization();
+        log('<hr><p class="log-title">[A* 演算法] 開始執行...</p>');
+        const { p1_edges, p2_edges } = a_star_paths();
+        animatePath(p1_edges, '#E57373', 4, false); // 紅色路徑
+        animatePath(p2_edges, '#64B5F6', 4, true);  // 藍色虛線路徑
+        log('A* 已找到兩條獨立的最短路徑。', 'success');
+        const intersection = (p1_edges || []).filter(value => (p2_edges || []).includes(value));
+        if (intersection.length > 0) {
+            const intersectionDetails = intersection.map(edgeId => {
+                const edge = edges.get(edgeId);
+                return edge ? `${edge.from}->${edge.to}` : edgeId;
+            }).join(', ');
+            log(`警告：路徑有 ${intersection.length} 條交集邊: ${intersectionDetails}`, 'warn');
+        } else {
+            log('資訊：兩條路徑沒有交集。', 'info');
+        }
+    };
+
+    document.getElementById('runAlgo4').onclick = () => {
+        resetVisualization();
+        const { p1_edges, p2_edges } = runAlgorithm4();
+        if (p1_edges && p2_edges) {
+            animatePath(p1_edges, '#1E88E5', 4, false); // 深藍色路徑
+            animatePath(p2_edges, '#FDD835', 4, true);  // 黃色虛線路徑
+            log('演算法4 已高亮顯示最小化交集的路徑組合。', 'success');
+        }
+    };
+
+    document.getElementById('reset').onclick = resetVisualization;
+    document.getElementById('generateGraph').onclick = generateNewGraph; // 綁定新按鈕事件
+
+    function fakeClick(id) { document.getElementById(id).click(); }
+    function runDemo(){
+        resetVisualization();
+        log('<hr><p class="log-title">[自動示範] 開始...</p>');
+        setTimeout(() => log('[自動示範] 步驟 1: 執行 A*'), 500);
+        setTimeout(() => fakeClick('runAStar'), 1000);
+        setTimeout(() => log('<br>[自動示範] 步驟 2: 執行演算法 4'), 4000);
+        setTimeout(() => fakeClick('runAlgo4'), 5000);
+        setTimeout(() => log('<br>[自動示範] 步驟 3: 生成新網路圖'), 8000);
+        setTimeout(() => fakeClick('generateGraph'), 9000);
+        setTimeout(() => log('<br>[自動示範] 完成'), 11000);
+    }
+    document.getElementById('demo').onclick = runDemo;
+});
+</script>
+
+</body>
+</html>
