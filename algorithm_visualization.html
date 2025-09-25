@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>演算法 4 (Min-2-DSP for DAGs) vs. A* 視覺化比較</title>
     
+    <!-- 引入 vis-network 函式庫 -->
     <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     
     <style>
@@ -245,12 +246,12 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         // --- 2. Compute E_∩ = E(s1,t1) ∩ E(s2,t2) and define G_=(V, E_∩) ---
-        // 在上一步中，我們已經找到了初始最短路徑的交集邊。
-        // 一個更嚴謹的 E_∩ 需要考慮所有可能的最短路徑，但為簡化，我們以此為基礎。
+        const initial_intersection_weight = calculatePathWeight(intersection_edges);
         log(`[第2步] 找到 ${intersection_edges.length} 條潛在交集邊 E_∩: {${intersection_edges.join(', ')}}`, 'info');
+        log(`-> 初始交集邊的總權重為: ${initial_intersection_weight}`, 'warn');
+
 
         // --- 3. Let B be a partitioning of V induced by the connected components of G_un; ---
-        // 簡化：我們將所有交集邊的端點視為單一的連通分量 B。
         const component_nodes = new Set();
         intersection_edges.forEach(edgeId => {
             const edge = edges.get(edgeId);
@@ -260,11 +261,7 @@ document.addEventListener('DOMContentLoaded', function () {
         log(`[第3步] 識別出交集元件 B 的節點: {${[...component_nodes].join(', ')}}`, 'info');
 
         // --- 4. foreach B in B do ... ---
-        // 簡化：我們只處理這一個識別出的交集元件。
         // --- 5-14: (核心邏輯簡化) ---
-        // 論文的核心思想是在元件 B 上找到最佳繞行路徑。
-        // 一個有效的啟發式方法是：暫時提高交集元件 B 中所有邊的成本，
-        // 迫使尋路演算法尋找替代路徑。這模擬了在輔助圖 H_B 上尋找最佳解的過程。
         log(`[第4-14步 簡化策略] 提高交集元件 B 中所有邊的成本，以尋找替代路徑...`, 'warn');
         
         const originalWeights = [];
@@ -277,11 +274,9 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         });
 
-        // 在修改成本後的圖上，為 s1->t1 和 s2->t2 重新尋找“最短”路徑
         const p1_final = a_star('s1', 't1');
         const p2_final = a_star('s2', 't2');
 
-        // 將圖的成本還原，以便下次計算
         originalWeights.forEach(item => {
             edges.update({ id: item.id, weight: item.weight, label: item.label });
         });
@@ -292,7 +287,6 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         // --- 15. Return min_v∈V α(v) ---
-        // 我們的返回值就是找到的這對新路徑。
         log('[第15步] 演算法 4 已找到一組交集更少（或無）的路徑組合。', 'success');
         return { p1_edges: p1_final.edges, p2_edges: p2_final.edges };
     }
@@ -323,6 +317,14 @@ document.addEventListener('DOMContentLoaded', function () {
         const p1 = a_star('s1', 't1');
         const p2 = a_star('s2', 't2');
         return { p1_edges: p1.edges, p2_edges: p2.edges };
+    }
+
+    function calculatePathWeight(pathEdges) {
+        if (!pathEdges || pathEdges.length === 0) return 0;
+        return pathEdges.reduce((sum, edgeId) => {
+            const edge = edges.get(edgeId);
+            return sum + (edge ? edge.weight : 0);
+        }, 0);
     }
     
     // --- 新增：動態生成網路圖函式 ---
@@ -429,14 +431,21 @@ document.addEventListener('DOMContentLoaded', function () {
         const { p1_edges, p2_edges } = a_star_paths();
         animatePath(p1_edges, '#E57373', 4, false); // 紅色路徑
         animatePath(p2_edges, '#64B5F6', 4, true);  // 藍色虛線路徑
-        log('A* 已找到兩條獨立的最短路徑。', 'success');
+        
+        const weight1 = calculatePathWeight(p1_edges);
+        const weight2 = calculatePathWeight(p2_edges);
+        log(`-> A* P1 (s1->t1) 路徑總權重: ${weight1}`, 'success');
+        log(`-> A* P2 (s2->t2) 路徑總權重: ${weight2}`, 'success');
+
         const intersection = (p1_edges || []).filter(value => (p2_edges || []).includes(value));
         if (intersection.length > 0) {
             const intersectionDetails = intersection.map(edgeId => {
                 const edge = edges.get(edgeId);
                 return edge ? `${edge.from}->${edge.to}` : edgeId;
             }).join(', ');
+            const intersectionWeight = calculatePathWeight(intersection);
             log(`警告：路徑有 ${intersection.length} 條交集邊: ${intersectionDetails}`, 'warn');
+            log(`-> 交集邊的總權重為: ${intersectionWeight}`, 'warn');
         } else {
             log('資訊：兩條路徑沒有交集。', 'info');
         }
@@ -448,7 +457,23 @@ document.addEventListener('DOMContentLoaded', function () {
         if (p1_edges && p2_edges) {
             animatePath(p1_edges, '#1E88E5', 4, false); // 深藍色路徑
             animatePath(p2_edges, '#FDD835', 4, true);  // 黃色虛線路徑
-            log('演算法4 已高亮顯示最小化交集的路徑組合。', 'success');
+            const weight1 = calculatePathWeight(p1_edges);
+            const weight2 = calculatePathWeight(p2_edges);
+            log(`-> 演算法4 P1 (s1->t1) 最終路徑總權重: ${weight1}`, 'success');
+            log(`-> 演算法4 P2 (s2->t2) 最終路徑總權重: ${weight2}`, 'success');
+            
+            const final_intersection = (p1_edges || []).filter(value => (p2_edges || []).includes(value));
+            if (final_intersection.length > 0) {
+                const intersectionDetails = final_intersection.map(edgeId => {
+                    const edge = edges.get(edgeId);
+                    return edge ? `${edge.from}->${edge.to}` : edgeId;
+                }).join(', ');
+                const intersectionWeight = calculatePathWeight(final_intersection);
+                log(`-> 最終仍有 ${final_intersection.length} 條交集邊: ${intersectionDetails}`, 'warn');
+                log(`-> 最終交集總權重: ${intersectionWeight}`, 'warn');
+            } else {
+                log('-> 最終路徑已無交集。', 'info');
+            }
         }
     };
 
@@ -473,3 +498,4 @@ document.addEventListener('DOMContentLoaded', function () {
 
 </body>
 </html>
+
